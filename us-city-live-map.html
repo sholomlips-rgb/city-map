@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>US City Live Map</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<style>
+:root{--ink:#0f1720;--panel:rgba(255,255,255,.95);--plane:#1d4ed8;--cam:#0f766e}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:var(--ink)}
+#map{position:absolute;inset:0}
+.panel{position:absolute;top:12px;left:12px;width:320px;max-width:calc(100vw - 24px);background:var(--panel);border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:14px 16px;z-index:5}
+.panel h1{font-size:18px;margin:0 0 2px}
+.sub{font-size:13px;color:#555;margin-bottom:8px}
+form{display:flex;gap:6px;position:relative}
+input[type=text]{flex:1;font-size:16px;padding:9px 10px;border:1px solid #ccc;border-radius:8px}
+button{font:inherit;font-size:14px;padding:9px 12px;border:0;border-radius:8px;background:var(--ink);color:#fff;cursor:pointer}
+button.ghost{background:#eee;color:var(--ink)}
+#results{list-style:none;margin:6px 0 0;padding:0;border-radius:8px;overflow:hidden}
+#results li{padding:9px 10px;background:#f6f6f6;border-top:1px solid #e5e5e5;cursor:pointer;font-size:14px}
+#results li:hover{background:#e9eef7}
+.quick{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px}
+.quick button{padding:6px 10px;font-size:13px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid #eee}
+.row label{display:flex;align-items:center;gap:8px;cursor:pointer}
+.st{font-size:12px;color:#666;text-align:right}
+.st.ok{color:#15803d}.st.err{color:#b91c1c}
+.gate{margin-top:6px;font-size:13px;padding:8px;border-radius:8px;background:#f3f4f6}
+.gate.on{background:#ccfbf1}
+details{margin-top:8px;font-size:13px}
+.plane{width:26px;height:26px;cursor:pointer}
+.plane svg{width:100%;height:100%;filter:drop-shadow(0 1px 2px rgba(0,0,0,.5))}
+.tag{position:absolute;left:28px;top:2px;white-space:nowrap;font-size:11px;font-weight:600;background:rgba(255,255,255,.85);padding:1px 4px;border-radius:4px}
+.camdot{width:16px;height:16px;border-radius:50%;background:var(--cam);border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);cursor:pointer}
+.camthumb{width:180px;background:#000;border:2px solid #fff;border-radius:8px;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.45);cursor:pointer}
+.camthumb img{display:block;width:100%;height:auto;min-height:60px}
+.camthumb div{font-size:11px;color:#fff;padding:3px 6px;background:rgba(0,0,0,.7)}
+#viewer{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;align-items:center;justify-content:center;z-index:20;flex-direction:column;padding:16px;gap:10px}
+#viewer img{max-width:100%;max-height:78vh;border-radius:8px}
+#viewer p{color:#fff;margin:0;text-align:center}
+.toggle{position:absolute;top:12px;right:56px;z-index:6;display:none}
+@media(max-width:600px){.panel{top:auto;bottom:12px;max-height:60vh;overflow:auto}.panel.min{max-height:56px;overflow:hidden}.toggle{display:block}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<button class="toggle" id="toggle">Panel</button>
+<div class="panel" id="panel">
+  <h1 id="title">Live city map</h1>
+  <div class="sub">Any US city · no keys needed · drag to pan, right-drag or two fingers to tilt</div>
+  <form id="search"><input type="text" id="q" placeholder="Search a US city or address" autocomplete="off"><button>Go</button></form>
+  <ul id="results"></ul>
+  <div class="quick">
+    <button type="button" class="ghost" data-c="New York, NY|40.7580|-73.9855">New York</button>
+    <button type="button" class="ghost" data-c="Los Angeles, CA|34.0522|-118.2437">Los Angeles</button>
+    <button type="button" class="ghost" data-c="San Francisco, CA|37.7880|-122.4075">San Francisco</button>
+    <button type="button" class="ghost" data-c="San Diego, CA|32.7157|-117.1611">San Diego</button>
+    <button type="button" class="ghost" data-c="Chicago, IL|41.8818|-87.6231">Chicago</button>
+    <button type="button" class="ghost" data-c="Miami, FL|25.7743|-80.1937">Miami</button>
+  </div>
+
+  <div class="row"><label><input type="checkbox" id="lyrPlanes" checked> Aircraft</label><span class="st" id="stPlanes">starting…</span></div>
+  <div class="row"><label><input type="checkbox" id="lyrCams" checked> Traffic cameras</label><span class="st" id="stCams">—</span></div>
+  <div class="row"><label><input type="checkbox" id="lyr3d" checked> 3D buildings</label><span class="st">OpenStreetMap</span></div>
+  <div class="gate" id="gate"></div>
+
+  <details>
+    <summary>Where cameras work</summary>
+    <div>Keyless official camera feeds are built in for <b>New York City</b> (NYC DOT) and <b>California</b> (Caltrans). Planes and 3D buildings work in every US city. Other states only share camera lists with a developer key.</div>
+  </details>
+</div>
+<div id="viewer"><img id="vImg" alt=""><p id="vCap"></p><button class="ghost" id="vClose">Close</button></div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script>
+{
+const CAM_GATE_ZOOM = 14.5, CAM_RADIUS_KM = 10, CAM_REFRESH_MS = 5000, PLANE_REFRESH_MS = 10000, MAX_LIVE_CAMS = 8;
+let city = {name:'New York, NY', lat:40.7580, lon:-73.9855};
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const setSt = (id, txt, cls) => { const e=$(id); e.textContent=txt; e.className='st'+(cls?' '+cls:''); };
+const km = (a,b,c,d) => { const x=(d-b)*Math.PI/180*Math.cos((a+c)/2*Math.PI/180), y=(c-a)*Math.PI/180; return 6371*Math.hypot(x,y); };
+const store = { get(k){try{return localStorage.getItem(k)}catch(e){return null}}, set(k,v){try{localStorage.setItem(k,v)}catch(e){}} };
+try { const saved = JSON.parse(store.get('lastCity')||'null'); if (saved && isFinite(saved.lat)) city = saved; } catch(e){}
+
+const map = new maplibregl.Map({ container:'map', style:'https://tiles.openfreemap.org/styles/liberty',
+  center:[city.lon,city.lat], zoom:15, pitch:60, bearing:-20, maxPitch:80, antialias:true });
+map.addControl(new maplibregl.NavigationControl({visualizePitch:true}), 'top-right');
+map.addControl(new maplibregl.ScaleControl({unit:'imperial'}), 'bottom-right');
+
+map.on('load', () => {
+  const st = map.getStyle();
+  if (!st.layers.some(l => l.type==='fill-extrusion')) {
+    const src = Object.keys(st.sources).find(s => st.sources[s].type==='vector');
+    map.addLayer({id:'bld3d', type:'fill-extrusion', source:src, 'source-layer':'building', minzoom:13,
+      paint:{'fill-extrusion-color':'#d6d3cd','fill-extrusion-height':['coalesce',['get','render_height'],10],
+             'fill-extrusion-base':['coalesce',['get','render_min_height'],0],'fill-extrusion-opacity':.85}});
+  }
+  goTo(city, false);
+});
+$('lyr3d').onchange = e => { for (const l of map.getStyle().layers) if (l.type==='fill-extrusion') map.setLayoutProperty(l.id,'visibility',e.target.checked?'visible':'none'); };
+
+/* ---------- City search (OpenStreetMap Nominatim, no key) ---------- */
+$('search').onsubmit = async e => {
+  e.preventDefault();
+  const q = $('q').value.trim(); if (!q) return;
+  const ul = $('results'); ul.innerHTML = '<li>Searching…</li>';
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&countrycodes=us&limit=5&q=${encodeURIComponent(q)}`);
+    const j = await r.json();
+    if (!j.length) { ul.innerHTML = '<li>No US match. Try “City, ST”.</li>'; return; }
+    ul.innerHTML = j.map((p,i) => `<li data-i="${i}">${esc(p.display_name)}</li>`).join('');
+    ul.querySelectorAll('li').forEach(li => li.onclick = () => {
+      const p = j[+li.dataset.i];
+      ul.innerHTML = '';
+      goTo({name: p.display_name.split(',').slice(0,2).join(',').trim(), lat:+p.lat, lon:+p.lon});
+    });
+  } catch(err) { ul.innerHTML = '<li>Search unavailable right now.</li>'; }
+};
+document.querySelectorAll('.quick button').forEach(b => b.onclick = () => {
+  const [name,lat,lon] = b.dataset.c.split('|'); goTo({name, lat:+lat, lon:+lon});
+});
+
+function goTo(c, fly=true){
+  city = c; store.set('lastCity', JSON.stringify(c));
+  $('title').textContent = c.name + ' — live';
+  if (fly) map.flyTo({center:[c.lon,c.lat], zoom:15, pitch:60, bearing:-20, duration:2000});
+  for (const m of planes.values()) m.remove(); planes.clear();
+  startPlanes();
+  loadCams();
+}
+
+/* ---------- Aircraft (OpenSky, fallback adsb.lol; both keyless) ---------- */
+const planes = new Map();
+const planeSvg = c => `<svg viewBox="0 0 24 24"><path fill="${c}" stroke="#fff" stroke-width="1" d="M12 2l2 7 7 4v2l-7-2-1 5 3 2v2l-4-1-4 1v-2l3-2-1-5-7 2v-2l7-4z"/></svg>`;
+async function fetchOpenSky(){
+  const d = 0.25, e = 0.3;
+  const u = `https://opensky-network.org/api/states/all?lamin=${city.lat-d}&lomin=${city.lon-e}&lamax=${city.lat+d}&lomax=${city.lon+e}`;
+  const r = await fetch(u); if (!r.ok) throw new Error(r.status);
+  const j = await r.json();
+  return (j.states||[]).filter(s=>s[5]!=null&&s[6]!=null).map(s=>({id:s[0], cs:(s[1]||'').trim()||s[0], lon:s[5], lat:s[6],
+    altFt:s[7]!=null?Math.round(s[7]*3.281):null, kt:s[9]!=null?Math.round(s[9]*1.944):null, trk:s[10]||0, gnd:s[8]}));
+}
+async function fetchAdsbLol(){
+  const r = await fetch(`https://api.adsb.lol/v2/point/${city.lat.toFixed(4)}/${city.lon.toFixed(4)}/15`); if (!r.ok) throw new Error(r.status);
+  const j = await r.json();
+  return (j.ac||[]).filter(a=>a.lat!=null).map(a=>({id:a.hex, cs:(a.flight||'').trim()||a.hex, lon:a.lon, lat:a.lat,
+    altFt:typeof a.alt_baro==='number'?a.alt_baro:null, kt:a.gs!=null?Math.round(a.gs):null, trk:a.track||0, gnd:a.alt_baro==='ground'}));
+}
+async function pollPlanes(){
+  if (!$('lyrPlanes').checked) return;
+  let list, src;
+  try { list = await fetchOpenSky(); src='OpenSky'; }
+  catch(e){ try { list = await fetchAdsbLol(); src='adsb.lol'; } catch(e2){ setSt('stPlanes','feed unreachable','err'); return; } }
+  const seen = new Set();
+  for (const p of list){
+    seen.add(p.id);
+    let m = planes.get(p.id);
+    if (!m){
+      const el = document.createElement('div'); el.className='plane';
+      el.innerHTML = `<div class="rot">${planeSvg(p.gnd?'#6b7280':'var(--plane)')}</div><span class="tag"></span>`;
+      m = new maplibregl.Marker({element:el}).setLngLat([p.lon,p.lat]).setPopup(new maplibregl.Popup({offset:14})).addTo(map);
+      planes.set(p.id, m);
+    }
+    m.setLngLat([p.lon,p.lat]);
+    const el = m.getElement();
+    el.querySelector('.rot').style.transform = `rotate(${p.trk}deg)`;
+    el.querySelector('.tag').textContent = p.cs + (p.altFt!=null ? ' · '+p.altFt.toLocaleString()+' ft' : '');
+    m.getPopup().setHTML(`<b>${esc(p.cs)}</b><br>Alt: ${p.altFt!=null?esc(p.altFt.toLocaleString())+' ft':'—'}<br>Speed: ${p.kt!=null?esc(p.kt)+' kt':'—'}<br>Heading: ${esc(Math.round(p.trk))}°<br><a href="https://globe.adsb.lol/?icao=${esc(p.id)}" target="_blank" rel="noopener">Track it</a>`);
+  }
+  for (const [id,m] of planes) if (!seen.has(id)) { m.remove(); planes.delete(id); }
+  setSt('stPlanes', `${list.length} live · ${src}`, 'ok');
+}
+let planeTimer;
+function startPlanes(){ clearInterval(planeTimer); pollPlanes(); planeTimer = setInterval(pollPlanes, PLANE_REFRESH_MS); }
+$('lyrPlanes').onchange = e => { if (e.target.checked) startPlanes(); else { clearInterval(planeTimer); for (const m of planes.values()) m.remove(); planes.clear(); setSt('stPlanes','off'); } };
+
+/* ---------- Cameras: keyless official sources ---------- */
+const CALTRANS = [[1,40.80,-124.16],[2,40.59,-122.39],[3,38.58,-121.49],[4,37.80,-122.27],[5,35.28,-120.66],[6,36.74,-119.79],
+                  [7,34.05,-118.25],[8,34.11,-117.29],[9,37.36,-118.39],[10,37.96,-121.29],[11,32.72,-117.16],[12,33.75,-117.87]];
+const inNYC = c => c.lat>40.47 && c.lat<40.93 && c.lon>-74.27 && c.lon<-73.68;
+const inCA  = c => c.lat>32.5 && c.lat<42.0 && c.lon>-124.5 &&
+  (c.lat>=39 ? c.lon < -120 : c.lon < Math.min(-114.1, -120 + (39-c.lat)*1.35));
+
+async function nycCams(){
+  const r = await fetch('https://webcams.nyctmc.org/api/cameras'); if (!r.ok) throw new Error(r.status);
+  const j = await r.json(); const arr = Array.isArray(j) ? j : (j.cameras || j.data || []);
+  return arr.filter(c => c.isOnline !== false && c.isOnline !== 'false').map(c => ({
+    id:'nyc-'+c.id, name:c.name||'NYC DOT camera', lat:+c.latitude, lon:+c.longitude,
+    url: c.imageUrl || `https://webcams.nyctmc.org/api/cameras/${c.id}/image`, src:'NYC DOT'}));
+}
+async function caltransCams(){
+  const near = CALTRANS.map(([d,la,lo]) => [d, km(city.lat,city.lon,la,lo)]).sort((a,b)=>a[1]-b[1]).slice(0,2);
+  const out = [];
+  for (const [d] of near){
+    const dd = String(d).padStart(2,'0');
+    try {
+      const r = await fetch(`https://cwwp2.dot.ca.gov/data/d${d}/cctv/cctvStatusD${dd}.json`); if (!r.ok) continue;
+      const j = await r.json();
+      for (const row of (j.data||[])){
+        const c = row.cctv || row; const loc = c.location || {};
+        if (String(c.inService) === 'false') continue;
+        const url = c.imageData?.static?.currentImageURL; if (!url) continue;
+        out.push({id:'ct-'+d+'-'+c.index, name:[loc.route, loc.locationName].filter(Boolean).join(' · ') || 'Caltrans camera',
+          lat:+loc.latitude, lon:+loc.longitude, url, src:'Caltrans'});
+      }
+    } catch(e){}
+  }
+  if (!out.length) throw new Error('none');
+  return out;
+}
+
+let cams = [];
+async function loadCams(){
+  for (const c of cams) c.marker.remove(); cams = [];
+  let fetcher = null;
+  if (inNYC(city)) fetcher = nycCams; else if (inCA(city)) fetcher = caltransCams;
+  if (!fetcher){ setSt('stCams','no keyless feed here'); updateGate(); return; }
+  setSt('stCams','loading…');
+  try {
+    const all = await fetcher();
+    cams = all.filter(c => isFinite(c.lat) && isFinite(c.lon) && km(city.lat,city.lon,c.lat,c.lon) <= CAM_RADIUS_KM);
+    for (const c of cams){
+      c.el = document.createElement('div'); c.el.className='camdot'; c.el.title=c.name;
+      c.el.onclick = () => openViewer(c);
+      c.marker = new maplibregl.Marker({element:c.el, anchor:'bottom'}).setLngLat([c.lon,c.lat]).addTo(map);
+    }
+    setSt('stCams', cams.length ? `${cams.length} nearby · ${cams[0].src}` : 'none nearby', cams.length?'ok':'');
+  } catch(e){ setSt('stCams','feed blocked or down','err'); }
+  updateGate();
+}
+
+const bust = u => u + (u.includes('?')?'&':'?') + 't=' + Date.now();
+function setLive(c, on){
+  if (on === !!c.live) return; c.live = on;
+  if (on){ c.el.className='camthumb'; c.el.innerHTML='<img alt=""><div></div>'; c.el.querySelector('div').textContent=c.name; c.el.querySelector('img').src=bust(c.url); }
+  else { c.el.className='camdot'; c.el.innerHTML=''; }
+}
+function updateGate(){
+  const g = $('gate'), z = map.getZoom(), on = z >= CAM_GATE_ZOOM && $('lyrCams').checked;
+  const b = map.getBounds(), ctr = map.getCenter();
+  const vis = cams.filter(c => b.contains([c.lon,c.lat])).sort((a,c2)=>km(ctr.lat,ctr.lng,a.lat,a.lon)-km(ctr.lat,ctr.lng,c2.lat,c2.lon));
+  const live = new Set(on ? vis.slice(0,MAX_LIVE_CAMS) : []);
+  for (const c of cams){ setLive(c, live.has(c)); c.marker.getElement().style.display = $('lyrCams').checked ? '' : 'none'; }
+  if (!cams.length){ g.className='gate'; g.textContent = (inNYC(city)||inCA(city)) ? 'No cameras loaded for this spot.' : 'Cameras: built in for NYC and California. Planes and 3D work here.'; }
+  else if (!on){ g.className='gate'; g.textContent = `Zoom in closer (now ${z.toFixed(1)}, need ${CAM_GATE_ZOOM}) to switch on live camera images.`; }
+  else { g.className='gate on'; g.textContent = `Live: ${live.size} camera${live.size===1?'':'s'} in view, refreshing every ${CAM_REFRESH_MS/1000}s.`; }
+}
+setInterval(() => { for (const c of cams) if (c.live) c.el.querySelector('img').src = bust(c.url); }, CAM_REFRESH_MS);
+map.on('moveend', updateGate);
+$('lyrCams').onchange = updateGate;
+
+function openViewer(c){ $('vImg').src = bust(c.url); $('vCap').textContent = c.name + ' · ' + c.src; $('viewer').style.display='flex'; }
+$('vClose').onclick = () => { $('viewer').style.display='none'; $('vImg').src=''; };
+$('toggle').onclick = () => $('panel').classList.toggle('min');
+}
+</script>
+</body>
+</html>
